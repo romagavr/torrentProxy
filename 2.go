@@ -97,24 +97,61 @@ func (d *Decoder) incrementPosition(pos int) {
     d.readChar()
 }
 
+type bencodeInfo struct {
+    Pieces [][]byte
+    PieceLength int
+    Length int
+    Name string
+} 
+
+type bencodeTorrent struct {
+    Announce string
+    AnnounceList []string
+    Info bencodeInfo
+}
+
 func main() {
     dat, err := ioutil.ReadFile("/home/roman/docker/golang/test3.torrent")
     check(err)
     //fmt.Printf("File contents: %s", dat)
     d := New([]byte(dat))
     t := d.Decode()
-        var slc []string
-    for _, j := range t {
-        switch v := j.(type) {
-        case string:
-            slc = append(slc, v)
-        case fmt.Stringer:
-            slc = append(slc, v.String())
-        default:
-            slc = append(slc, fmt.Sprintf("%v", v))
-        }
+    bencode := bencodeTorrent{}
+    for i, val := range t.(map[string]interface{}) {
+        switch i {
+            case "announce":
+                bencode.Announce = val.(string)
+            case "announce-list":
+                for _, value := range val.([]interface{}) {
+                   for _, vll := range value.([]interface{}){
+                    bencode.AnnounceList = append(bencode.AnnounceList, vll.(string))
+                   
+                }} 
+            case "info":
+                for j, value := range val.(map[string]interface{}) {                  
+                    switch j {
+                    case "pieces":
+                        hash := make([]byte,20)
+                        for k, r := range value.(string) {
+                           hash = append(hash, byte(r))
+                           if k % 19 == 0 {
+                               fmt.Println(len(hash))
+                               bencode.Info.Pieces = append(bencode.Info.Pieces, hash)
+                               hash = nil
+                                hash = make([]byte,20)
+                        }
+                        }
+                    case "piece length":
+                        bencode.Info.PieceLength = value.(int)
+                    case "length":
+                        bencode.Info.Length = value.(int)
+                    case "name":
+                        bencode.Info.Name = value.(string)
+                    }    
+        }}
+        //fmt.Println(i)
+        //fmt.Println(val) 
     }
-
-    fmt.Println(slc)
+    fmt.Println(len(bencode.Info.Pieces))
     //fmt.Printf("%s", t["info"].(map[string]interface{}))
 }
