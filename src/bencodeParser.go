@@ -1,4 +1,4 @@
-package main
+package src
 
 import (
     "fmt"
@@ -110,8 +110,8 @@ type bencodeTorrent struct {
     Info bencodeInfo
 }
 
-func main() {
-    dat, err := ioutil.ReadFile("/home/roman/docker/golang/test3.torrent")
+func getBencodeStruct(torrentPath string) *bencodeTorrent {
+    dat, err := ioutil.ReadFile(torrentPath)
     check(err)
     //fmt.Printf("File contents: %s", dat)
     d := New([]byte(dat))
@@ -135,7 +135,7 @@ func main() {
                         for k, r := range value.(string) {
                            hash = append(hash, byte(r))
                            if k % 19 == 0 {
-                               fmt.Println(len(hash))
+                               //fmt.Println(len(hash))
                                bencode.Info.Pieces = append(bencode.Info.Pieces, hash)
                                hash = nil
                                 hash = make([]byte,20)
@@ -152,6 +152,7 @@ func main() {
         //fmt.Println(i)
         //fmt.Println(val) 
     }
-    fmt.Println(len(bencode.Info.Pieces))
-    //fmt.Printf("%s", t["info"].(map[string]interface{}))
+    //fmt.Println(len(bencode.Info.Pieces))
+    //fmt.Printf("%s", t["info"].(map[string]interface{}))\
+    return &bencode
 }
