@@ -1,6 +1,7 @@
 package src
 
 import (
+    "crypto/sha1"
     "fmt"
     "io/ioutil"
     "bytes"
@@ -75,7 +76,16 @@ func (d *Decoder) decodeDictionary() map[string]interface{} {
     dic := map[string]interface{}{}
     d.incrementPosition(1)
     for d.char != 'e' {
-        dic[d.decodeString()] = d.Decode()
+        key := d.decodeString()
+        var f bool = key == "info"
+        var t int
+        if f {
+             t = d.position
+        }
+        dic[key] = d.Decode()
+        if f {
+           dic["infoHash"] = sha1.Sum(d.source[t : d.position])
+        }
     }
     d.incrementPosition(1)
     return dic
@@ -104,19 +114,20 @@ type bencodeInfo struct {
     Name string
 } 
 
-type bencodeTorrent struct {
+type BencodeTorrent struct {
     Announce string
     AnnounceList []string
+    InfoHash [20]uint8
     Info bencodeInfo
 }
 
-func getBencodeStruct(torrentPath string) *bencodeTorrent {
+func GetBencodeStruct(torrentPath string) BencodeTorrent {
     dat, err := ioutil.ReadFile(torrentPath)
     check(err)
     //fmt.Printf("File contents: %s", dat)
     d := New([]byte(dat))
     t := d.Decode()
-    bencode := bencodeTorrent{}
+    bencode := BencodeTorrent{}
     for i, val := range t.(map[string]interface{}) {
         switch i {
             case "announce":
@@ -125,8 +136,10 @@ func getBencodeStruct(torrentPath string) *bencodeTorrent {
                 for _, value := range val.([]interface{}) {
                    for _, vll := range value.([]interface{}){
                     bencode.AnnounceList = append(bencode.AnnounceList, vll.(string))
-                   
-                }} 
+                    }
+                }
+            case "infoHash":
+                bencode.InfoHash = val.([20]uint8)
             case "info":
                 for j, value := range val.(map[string]interface{}) {                  
                     switch j {
@@ -154,5 +167,5 @@ func getBencodeStruct(torrentPath string) *bencodeTorrent {
     }
     //fmt.Println(len(bencode.Info.Pieces))
     //fmt.Printf("%s", t["info"].(map[string]interface{}))\
-    return &bencode
+    return bencode
 }
