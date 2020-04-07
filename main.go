@@ -2,6 +2,7 @@ package main
 
 import (
     "bytes"
+    "encoding/binary"
     "fmt"
     _ "fmt"
     "io"
@@ -13,13 +14,33 @@ import (
     "torrentProxy/src"
 )
 
+type Message struct {
+    Id uint8
+    Payload []byte
+}
+
+func (m *Message) Serialize() []byte{
+    if m == nil {
+        return make([]byte, 4)
+    }
+    buf := make([]byte, len(m.Payload) + 5)
+    binary.BigEndian.PutUint32(buf[:4], uint32(len(m.Payload) + 1))
+    buf[4] = m.Id
+    copy(buf[5:], m.Payload)
+    return buf
+}
+
+func Unserialize(r []byte) Message {
+    return Message{Id:r[0], Payload: r[1:]}
+}
+
 func main()  {
     // Parse bencodeed File
     data, err := ioutil.ReadFile("/home/roman/golang/testfiles/9.torrent")
     bencode := src.BencodeTorrent{}
     bencode.GetBencodeStruct(data)
 
-    response := bencode.GetTorrentRequest()
+    response := bencode.GetTorrentResponse()
 
     //Format Bittorrent handshake
     var handShake []byte
@@ -48,7 +69,6 @@ func main()  {
     if err != nil {
        fmt.Println("Peer writting error")
     }
-    fmt.Println("2323")
     hhh := make([]byte, 1)
         _, err = io.ReadFull(conn, hhh)
         if err != nil {

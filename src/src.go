@@ -1,167 +1,179 @@
 package src
 
 import (
+    "bufio"
     "bytes"
     "crypto/sha1"
     "encoding/binary"
     "fmt"
+    "io"
     "io/ioutil"
     "math/rand"
     "net"
     "net/http"
     "net/url"
     "strconv"
+    "time"
 )
 
-func check(e error) {
-    if e != nil {
-        fmt.Print("Error")
+
+type BencodeTorrent struct {
+    //Common fields
+    Announce string
+    Info Info
+
+    //Optional fields
+    AnnounceList AnnounceList
+    CreationDate time.Time
+    Comment string
+    CreatedBy string
+    Encoding string
+
+    //related fields
+    PeerId [20]byte
+    InfoHash [20]uint8
+}
+
+type Info struct {
+    Pieces [][]byte
+    PieceLength int
+    Name string
+
+    //Optional fields
+    Private int
+
+    //SingleFileInfo
+    Length int
+    Md5Sum string
+
+    //MultiFileInfo
+    Files []File
+}
+
+type AnnounceList struct {
+    Announces []string
+}
+
+type File struct {
+    Length int
+    Path []string
+    Md5Sum string
+}
+
+func (an *AnnounceList) decodeList(r *bufio.Reader) []string {
+    for peekChar(r) == "l" {
+        discardChar(r)
+        an.Announces = append(an.Announces,an.decodeList(r)...)
+    }
+    for peekChar(r) != "e" {
+        an.Announces = append(an.Announces,decodeString(r))
+    }
+    discardChar(r)
+    return an.Announces
+}
+
+func decodeFile(r *bufio.Reader) File {
+    discardChar(r)
+    f := File{}
+    for peekChar(r) != "e" {
+        switch decodeString(r) {
+        case "length":
+            f.Length = decodeInt(r)
+        case "md5sum":
+            f.Md5Sum = decodeString(r)
+        case "path":
+            discardChar(r) //discard l
+            for peekChar(r) != "e" {
+                f.Path = append(f.Path, decodeString(r))
+            }
+            discardChar(r) //discard e (l)
+        }
+    }
+    discardChar(r) //discard e (d)
+    return f
+}
+
+func decodeString(r *bufio.Reader) string {
+    num, _ := r.ReadString(':')
+    length, _ := strconv.Atoi(num[:len(num)-1])
+    read, _ := r.Read(make([]byte, length))
+    return string(read)
+}
+
+func decodeInt(r *bufio.Reader) int {
+    num, _ := r.ReadString('e')
+    n, _ := strconv.Atoi(num[1:len(num)-1])
+    return n
+}
+
+func peekChar(r *bufio.Reader) string {
+    var ch []byte
+    var e error
+    if ch, e = r.Peek(1); e != nil {
+        panic(e)
+    }
+    return string(ch)
+}
+
+func readChar(r *bufio.Reader) string {
+    var ch byte
+    var e error
+    if ch, e = r.ReadByte(); e != nil {
+        panic(e)
+    }
+    return string(ch)
+}
+
+func discardChar(r *bufio.Reader) {
+    if _, e := r.Discard(1); e != nil {
         panic(e)
     }
 }
 
-type Decoder struct {
-    source   []byte
-    position int
-    char     byte
-}
-
-func (d *Decoder) readChar() {
-    if d.position >= len(d.source) {
-        d.char = 0
-        return
-    }
-    d.char = d.source[d.position]
-}
-
-func New(source []byte) *Decoder {
-    d := &Decoder{source: source}
-    d.readChar()
-    return d
-}
-
-func (d *Decoder) Decode() interface{} {
-    switch d.char {
-    case 'd':
-        return d.decodeDictionary()
-    case 'l':
-        return d.decodeList()
-    case 'i':
-        return d.decodeInt()
-    default:
-        if isDigit(d.char) {
-            return d.decodeString()
-        }
-        return nil
-    }
-}
-
-func (d *Decoder) decodeInt() int {
-    var i int
-    e := d.position + bytes.IndexByte(d.source[d.position:], byte('e'))
-    d.position++
-    s := d.position
-    d.position += e - s
-    i, _ = strconv.Atoi(string(d.source[s:d.position]))
-    d.incrementPosition(1)
-    return i
-}
-
-func (d *Decoder) decodeList() []interface{} {
-    l := []interface{}{}
-    d.incrementPosition(1)
-    for d.char != 'e' {
-        l = append(l,d.Decode())
-    }
-    d.incrementPosition(1)
-    return l
-}
-
-func (d *Decoder) decodeDictionary() map[string]interface{} {
-    dic := map[string]interface{}{}
-    d.incrementPosition(1)
-    for d.char != 'e' {
-        key := d.decodeString()
-        var f bool = key == "info"
-        var t int
-        if f {
-             t = d.position
-        }
-        dic[key] = d.Decode()
-        if f {
-           dic["infoHash"] = sha1.Sum(d.source[t : d.position])
-        }
-    }
-    d.incrementPosition(1)
-    return dic
-}
-
-func (d *Decoder) decodeString() string {
-    colon := d.position + bytes.IndexByte(d.source[d.position:], byte(':'))
-    length, _ := strconv.Atoi(string(d.source[d.position:colon]))
-    d.incrementPosition(colon - d.position + length + 1)
-    return string(d.source[colon+1 : d.position])
-}
-
-func isDigit(b byte) bool {
-    return b>='0' && b <= '9'
-}
-
-func (d *Decoder) incrementPosition(pos int) {
-    d.position += pos
-    d.readChar()
-}
-
-type bencodeInfo struct {
-    Pieces [][]byte
-    PieceLength int
-    Length int
-    Name string
-} 
-
-type BencodeTorrent struct {
-    Announce string
-    AnnounceList []string
-    InfoHash [20]uint8
-    Info bencodeInfo
-    PeerId [20]byte
-}
-
-func (bencode *BencodeTorrent) GetBencodeStruct(data []byte) {
-    t := New(data).Decode()
-    bencode.PeerId = CreatePeerId()
-    for i, val := range t.(map[string]interface{}) {
-        switch i {
+func (b *BencodeTorrent) decodeDictionary(r *bufio.Reader) {
+    discardChar(r)
+    for peekChar(r) != "e" {
+        switch decodeString(r) {
             case "announce":
-                bencode.Announce = val.(string)
+                b.Announce = decodeString(r)
             case "announce-list":
-                for _, value := range val.([]interface{}) {
-                   for _, vll := range value.([]interface{}) {
-                    bencode.AnnounceList = append(bencode.AnnounceList, vll.(string))
-                    }
-                }
-            case "infoHash":
-                bencode.InfoHash = val.([20]uint8)
+                b.AnnounceList.decodeList(r)
+            case "comment":
+                b.Comment = decodeString(r)
+            case "creation date":
+                b.CreationDate = time.Unix(int64(decodeInt(r)), 0)
+            case "created by":
+                b.CreatedBy = decodeString(r)
+            case "encoding":
+                b.Encoding = decodeString(r)
             case "info":
-                for j, value := range val.(map[string]interface{}) {                  
-                    switch j {
-                        case "pieces":
-                            byts := []byte(value.(string))
-                            bencode.Info.Pieces = make([][]byte, len(byts)/20)
-                            for k:=0; k < len(byts)/20; k++ {
-                               copy(bencode.Info.Pieces[k], byts[k*20:k*20+20])
-                            }
-                        case "piece length":
-                            bencode.Info.PieceLength = value.(int)
-                        case "length":
-                            bencode.Info.Length = value.(int)
-                        case "name":
-                            bencode.Info.Name = value.(string)
-                    }
+                b.decodeDictionary(r)
+            case "pieces":
+                str := decodeString(r)
+                for k:=0; k < len(str)/20; k++ {
+                    copy(b.Info.Pieces[k], str[k*20:k*20+20])
                 }
+            case "piece length":
+                b.Info.PieceLength = decodeInt(r)
+            case "private":
+                b.Info.Private = decodeInt(r)
+            case "length":
+                b.Info.Length = decodeInt(r)
+            case "name":
+                b.Info.Name = decodeString(r)
+            case "md5sum":
+                b.Info.Name = decodeString(r)
+            case "files":
+                discardChar(r) //discard l
+                for peekChar(r) == "d" {
+                    b.Info.Files = append(b.Info.Files,decodeFile(r))
+                }
+                discardChar(r) //discard e (l)
         }
     }
+    discardChar(r) //discard e (d)
 }
+
 
 func CreatePeerId() [20]byte {
     var peerId [20]byte
@@ -183,7 +195,7 @@ type TorrentResponse struct {
     Peers []Peer
 }
 
-func (bencode *BencodeTorrent) GetTorrentRequest() TorrentResponse {
+func (bencode *BencodeTorrent) GetTorrentResponse() TorrentResponse {
     base, err := url.Parse(bencode.Announce)
     if err != nil {
         fmt.Println("error")
